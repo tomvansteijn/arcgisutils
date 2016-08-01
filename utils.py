@@ -3,52 +3,77 @@
 # Tom van Steijn, Royal HaskoningDHV
 
 import arcpy as ap
-import numpy as np 
+import numpy as np
 
 import os
 
-FORMATS = {
-    'en': '{0:.{1:d}f} - {2:.{3:d}f}', 
+CLASSLABELFORMATS = {
+    'en': '{0:.{1:d}f} - {2:.{3:d}f}',
     'nl': '{0:.{1:d}f} tot {2:.{3:d}f}'}
 
-def safe_get(list_, idx=0):
-    '''get first item of list if len(list)>0'''
+
+def safe_get(list_, idx=0, default=None):
+    """get requested item of list if len(list) > (idx+1), else default"""
     try:
         return list_[idx]
     except IndexError:
-        return None
+        return default
 
-def setclassbreaks(layer, start, stop, step):
-    lyr = ap.mapping.Layer(layer)
-    lyr.symbology.classBreakValues = np.arange(start, stop + step, step)
+
+def safe_get_layer(layer):
+    """convert layer pathname to layer instance if not layer instance"""
+    if not isinstance(layer, ap.mapping.Layer):
+        try:
+            layer = ap.mapping.Layer(layer)
+        except ValueError:
+            raise
+    return layer
+
+
+def setclassbreaks_values(layer, values):
+    """set class breaks of given layer to values in list"""
+    layer = safe_get_layer(layer)
+    layer.symbology.classBreakValues = values
+
+
+def setclassbreaks_range(layer, start, stop, step):
+    """set class breaks of given layer to range"""
+    layer = safe_get_layer(layer)
+    layer.symbology.classBreakValues = np.arange(start, stop + step, step)
+
 
 def fixlabels(layer, decimals=2, lang='en'):
-    fmt = FORMATS.get(lang.lower(), 'en')
+    """format class break labels"""
+    fmt = CLASSLABELFORMATS.get(lang.lower(), 'en')
     lyr = ap.mapping.Layer(layer)
     values = lyr.symbology.classBreakValues
-    labels = []
+    newlabels = []
     for left, right in zip(values[:-1], values[1:]):
         if left in {-999, -9999, -1e9}:
-            labels.append('< {0:.{1:d}f}'.format(right, decimals))
+            newlabels.append('< {0:.{1:d}f}'.format(right, decimals))
         elif right in {999, 9999, 1e9}:
-            labels.append('> {0:.{1:d}f}'.format(left, decimals))
+            newlabels.append('> {0:.{1:d}f}'.format(left, decimals))
         else:
-            labels.append(fmt.format(left, decimals, right, decimals))    
-    lyr.symbology.classBreakLabels = labels
+            newlabels.append(fmt.format(left, decimals, right, decimals))
+    lyr.symbology.classBreakLabels = newlabels
 
-def namereplace(find, repl, grouplayer=None, wildcard='*'):    
+
+def namereplace(find, replace, grouplayer=None, wildcard='*'):
+    """replace string in layer names of all layers in TOC, optional wildcard"""
     if grouplayer:
         layers = ap.mapping.ListLayers(ap.mapping.Layer(grouplayer), wildcard)
     else:
         doc = ap.mapping.MapDocument('CURRENT')
         layers = ap.mapping.ListLayers(doc, wildcard)
     for layer in layers:
-        layer.name = layer.name.replace(find, repl)
+        layer.name = layer.name.replace(find, replace)
     ap.RefreshTOC()
 
+
 def clip_by_display(features, dataframe):
+    """clip features by display extent of dataframe"""
     mxd = ap.mapping.MapDocument('CURRENT')
-    df = safe_get(ap.mapping.ListDataFrames(mxd, dataframe))    
+    df = safe_get(ap.mapping.ListDataFrames(mxd, dataframe))
     if df is None:
         raise ValueError('dataframe {} not found'.format(dataframe))
     extent_mask = ap.Polygon(ap.Array([df.extent.lowerLeft,
@@ -56,10 +81,15 @@ def clip_by_display(features, dataframe):
         df.extent.upperLeft,
         df.extent.upperRight]))
     filename, ext = os.path.splitext(features)
-    output_features = '{}_{}.{}'.format(filename, dataframe, ext)
+    if ext == '':
+        output_features = '{}_{}'.format(filename, dataframe)
+    else:
+        output_features = '{}_{}.{}'.format(filename, dataframe, ext)
     ap.analysis.Clip(features, extent_mask, output_features)
 
+
 def setdatasource(layer, datasource):
+    """set layer or grouplayer to datasource"""
     if not isinstance(layer, ap.mapping.Layer):
         layer = ap.mapping.Layer(layer)
     if layer.isGroupLayer:
@@ -73,11 +103,13 @@ def setdatasource(layer, datasource):
         workspace = 'RASTER_WORKSPACE'
     layer.replaceDataSource(folder, workspace, os.path.splitext(filename)[0])
 
+
 def copysymbology(layer, symbologylayer):
+    """copy layer symbology to layer or grouplayer"""
     if not isinstance(layer, ap.mapping.Layer):
         layer = ap.mapping.Layer(layer)
     if isinstance(symbologylayer, ap.mapping.Layer):
-        layerfile = os.path.splitext(symbologylayer.dataSource)[0] + '.lyr'        
+        layerfile = os.path.splitext(symbologylayer.dataSource)[0] + '.lyr'
         ap.management.SaveToLayerFile(symbologylayer, layerfile)
         symbologylayer = layerfile
     if layer.isGroupLayer:
